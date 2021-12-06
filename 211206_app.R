@@ -56,7 +56,6 @@ col_stops <- data.frame(
   c = c('#e74c3c', '#f39c12', '#00a65a'),
   stringsAsFactors = FALSE
 )
-
 ##+++++++++++++++++++++++++++ Graphical UI +++++++++++++++++++++++++++++++++++
 ui <- navbarPage(
   title =
@@ -65,9 +64,6 @@ ui <- navbarPage(
     ),
   windowTitle = "BackpocketPhysio › Diagnosis",
   useShinydashboard(),
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  ##            TAB: INFO ####
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   tabPanel(
     "Info",
     icon = icon("info"),
@@ -77,9 +73,6 @@ ui <- navbarPage(
       label = "Download .csv"
     )
   ),
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  ##            TAB: DIAGNOSTIC TESTS ####
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   tabPanel(
     "Diagnostic tests",
     icon = icon("vial"),
@@ -96,12 +89,12 @@ ui <- navbarPage(
         ),
         selectInput(
           inputId = "disorder",
-          label = "Patient population",
+          label = "Disorder",
           choices = NULL
         ),
         selectInput(
           inputId = "patpop",
-          label = "Disorder",
+          label = "Patient population",
           choices = NULL
         ),
         selectInput(
@@ -109,16 +102,16 @@ ui <- navbarPage(
           label = "Test",
           choices = NULL
         ),
-        # materialSwitch(
-        #   inputId = "onlygood",
-        #   label = "Se/Sp > 0.5",
-        #   right = TRUE
-        # ),
-        # pickerInput(
-        #   inputId = "lim_prev",
-        #   label = "Limit the prevalence",
-        #   choices = c("ALL", "5%", "10%", "20%")
-        # ),
+        materialSwitch(
+          inputId = "onlygood",
+          label = "Se/Sp > 0.5",
+          right = TRUE
+        ),
+        pickerInput(
+          inputId = "lim_prev",
+          label = "Limit the prevalence",
+          choices = c("ALL", "5%", "10%", "20%")
+        ),
         sliderInput(
           inputId = "pat_prev",
           label = "Pre-test probability",
@@ -227,9 +220,6 @@ ui <- navbarPage(
       ))
     )
   ),
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  ##            TAB: MY PATIENT ####
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   tabPanel(
     "My patient",
     icon = icon("user-md"),
@@ -238,12 +228,12 @@ ui <- navbarPage(
         fluid = TRUE,
         selectInput(
           inputId = "disorder_list",
-          label = "Patient population",
+          label = "Disorder",
           choices = NULL
         ),
         selectInput(
           inputId = "patpop_mypat",
-          label = "Disorder",
+          label = "Patient population",
           choices = NULL
         ),
         sliderInput(
@@ -305,24 +295,16 @@ ui <- navbarPage(
       ))
     )
   ),
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  ##            TAB: ALL DATA ####
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   tabPanel("All data",
            icon = icon("table"),
            DT::dataTableOutput("dt_tests"))
 )
 
 ##+++++++++++++++++++++++++++ SERVER FXS +++++++++++++++++++++++++++++++++++++
-
 server <- function(input, output, session) {
-  
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  ##            OVERALL FUNCTIONS ####
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  
-  ## Create pooled database #####
+  ## LIMIT BASED ON INPUT
   tests_pooled <- reactive({
+    if (input$lim_prev == "ALL") {
       tests <- tests %>%
         dplyr::group_by(level, disease, population, test) %>%
         dplyr::summarise(
@@ -337,49 +319,35 @@ server <- function(input, output, session) {
                       sp = round((tn) / (tn + fn), 3),
                       lr_pos = min(se,0.999)/(1-min(sp,0.999)),
                       lr_neg =(1-min(sp,0.999))/min(se,0.999))
-
+    } ## END IF
+    
+    if (input$lim_prev != "ALL") {
+      req(input$pat_prev)
+      lim_id <-
+        c(0.05, 0.1, 0.2)[(c("5%", "10%", "20%") == input$lim_prev)]
+      tests <- tests %>%
+        dplyr::mutate(prev = (tp + fp) / (tp + fp + tn + fn)) %>%
+        dplyr::filter(prev < (input$pat_prev + 0.05) | prev > (input$pat_prev - 0.05)) %>%
+        dplyr::group_by(level, disease, population, test) %>%
+        dplyr::summarise(
+          tp = sum(tp),
+          fp = sum(fp),
+          tn = sum(tn),
+          fn = sum(fn)
+        ) %>%
+        rowwise() %>%
+        dplyr::mutate(prev = round((tp + fp) / (tp + fp + tn + fn), 3),
+                      se = round((tp) / (tp + fp), 3),
+                      sp = round((tn) / (tn + fn), 3),
+                      lr_pos = min(se,0.999)/(1-min(sp,0.999)),
+                      lr_neg =(1-min(sp,0.999))/min(se,0.999))
+    } ## END IF
+    
     return(tests)
     
   })
   
-  
-  ## Filter pooled Se and Sp #####
-  diag <- reactive({
-    req(input$disorder)
-    req(input$patpop)
-    req(input$level)
-    req(input$tests)
-    
-    ## filter pooled dataset
-    tests_pooled_filter <- tests_pooled() %>%
-      filter(
-        disease == input$disorder,
-        population == input$patpop,
-        level == input$level,
-        test == input$tests
-      )
-    
-    ## create empty list to save results
-    diag <- list()
-    
-    ## prevalence
-    diag[["prev"]] <- tests_pooled_filter$prev
-    
-    ## sensitivity
-    diag[["se"]] <- tests_pooled_filter$se
-    
-    ## specificity
-    diag[["sp"]] <- tests_pooled_filter$sp
-    
-    return(diag)
-  })
-  
-  
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  ##            TAB: DIAGNOSTIC TESTS ####
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  
-  ## +++Input for each level #####
+  ## SELECT INPUT AND UPDATE CHOICES FOR EACH LEVEL (TAB:: DIAGNOSTIC TESTS)
   level <- reactive({
     level <- dplyr::filter(tests, level == input$level)
     return(level)
@@ -418,305 +386,7 @@ server <- function(input, output, session) {
     return(data)
   })
   
-  ## +++Output #####
-  ## ++++++Text output update #####
-  output$nstudies <- renderText({
-    nrow(data())
-    
-  })
-  
-  ## ++++++Create gauges #####
-  ## +++++++++Se #####
-  output$se <- renderHighchart({
-    highchart() %>%
-      hc_chart(type = "solidgauge") %>%
-      hc_pane(
-        startAngle = -90,
-        endAngle = 90,
-        background = list(
-          outerRadius = '100%',
-          innerRadius = '60%',
-          shape = "arc"
-        )
-      ) %>%
-      hc_tooltip(enabled = FALSE) %>%
-      hc_yAxis(
-        stops = list_parse2(col_stops),
-        lineWidth = 0,
-        minorTickWidth = 0,
-        tickAmount = 2,
-        min = 0,
-        max = 100,
-        labels = list(y = 26, style = list(fontSize = "22px"))
-      ) %>%
-      hc_add_series(
-        data = round(diag()$se, 3) * 100,
-        dataLabels = list(
-          y = -50,
-          borderWidth = 0,
-          useHTML = TRUE,
-          style = list(fontSize = "40px")
-        )
-      ) %>%
-      hc_size(height = 300)
-  })
-  
-  ## +++++++++Sp #####
-  output$sp <- renderHighchart({
-    highchart() %>%
-      hc_chart(type = "solidgauge") %>%
-      hc_pane(
-        startAngle = -90,
-        endAngle = 90,
-        background = list(
-          outerRadius = '100%',
-          innerRadius = '60%',
-          shape = "arc"
-        )
-      ) %>%
-      hc_tooltip(enabled = FALSE) %>%
-      hc_yAxis(
-        stops = list_parse2(col_stops),
-        lineWidth = 0,
-        minorTickWidth = 0,
-        tickAmount = 2,
-        min = 0,
-        max = 100,
-        labels = list(y = 26, style = list(fontSize = "22px"))
-      ) %>%
-      hc_add_series(
-        data = round(diag()$sp, 3) * 100,
-        dataLabels = list(
-          y = -50,
-          borderWidth = 0,
-          useHTML = TRUE,
-          style = list(fontSize = "40px")
-        )
-      ) %>%
-      hc_size(height = 300)
-  })
-  
-  ## +++++++++Prev #####
-  output$prev <- renderHighchart({
-    highchart() %>%
-      hc_chart(type = "solidgauge") %>%
-      hc_pane(
-        startAngle = -90,
-        endAngle = 90,
-        background = list(
-          outerRadius = '100%',
-          innerRadius = '60%',
-          shape = "arc"
-        )
-      ) %>%
-      hc_tooltip(enabled = FALSE) %>%
-      hc_yAxis(
-        #stops = list_parse2(col_stops),
-        lineWidth = 0,
-        minorTickWidth = 0,
-        tickAmount = 2,
-        min = 0,
-        max = 100,
-        labels = list(y = 26, style = list(fontSize = "22px"))
-      ) %>%
-      hc_add_series(
-        data = round(diag()$prev, 3) * 100,
-        dataLabels = list(
-          y = -50,
-          borderWidth = 0,
-          useHTML = TRUE,
-          style = list(fontSize = "40px")
-        )
-      ) %>%
-      hc_size(height = 300)
-  })
-  
-  ## ++++++Create itemplot #####
-  ## +++++++++Prev #####
-  output$prev_item <- renderHighchart2({
-    ## save input
-    Prev <- diag()$prev
-    Sp <- diag()$sp
-    Se <- diag()$se
-    
-    PAT <- round(100 * Prev)
-    HEALTH <- 100 - PAT
-    
-    TP <- round(Se * PAT)
-    TN <- round(Sp * HEALTH)
-    FN <- PAT - TP
-    FP <- HEALTH - TN
-    
-    df2 <- tibble(
-      type = c("TP", "FN", "TN", "FP"),
-      amount = c(TP, FN, TN, FP),
-      faico = c("user-injured", "user-injured", "user", "user"),
-      col = c("#D35400", "#F89101", "#3CAB48", "#FFCD01")
-    )
-    
-    df2 <- df2 %>%
-      mutate(
-        uri = map2_chr(faico, col, ~ fa_to_png_to_datauri(.x, fill = .y)),
-        marker = map(uri, ~ list(
-          symbol = str_glue("url({data_uri})", data_uri = .x)
-        ))
-      )
-    
-    hchart(
-      df2,
-      "item",
-      hcaes(name = type, y = amount),
-      name = "Test result",
-      showInLegend = TRUE
-    ) %>%
-      hc_plotOptions(# avoid hide series due bug
-        series = list(point = list(events = list(
-          legendItemClick = JS("function(e) {e.preventDefault() }")
-        )))) %>%
-      hc_legend(labelFormat =  '{name} <span style="opacity: 0.4">{y}</span>') %>%
-      hc_colors(pull(df2, col))
-    
-  })
-  
-  ## ++++++Study Quality #####
-  quality <- reactive({
-    qual_dat <- data() %>%
-      mutate(
-        Score = round(score / maxscore, 3) * 100,
-        Study = paste0(study, " (", year, ")")
-      )
-    
-    ## +++++++++Bullet plot #####
-    hchart(qual_dat,
-           "bullet",
-           hcaes(x = Study, y = Score, target = 100),
-           color = "black",
-           name = "Quality score (%)") %>%
-      hc_chart(inverted = TRUE) %>%
-      hc_yAxis(
-        min = 0,
-        max = 100,
-        gridLineWidth = 0,
-        plotBands = list(
-          list(
-            from = 0,
-            to = 50,
-            color = "#e74c3c"
-          ),
-          list(
-            from = 50,
-            to = 80,
-            color = "#f39c12"
-          ),
-          list(
-            from = 80,
-            to = 100,
-            color = "#00a65a"
-          )
-        )
-      ) %>%
-      hc_xAxis(gridLineWidth = 15,
-               gridLineColor = "white") %>%
-      hc_plotOptions(series = list(
-        pointPadding = 0.25,
-        pointWidth = 15,
-        borderWidth = 0,
-        targetOptions = list(width = '200%')
-      )) %>%
-      hc_size(height = 300)
-    
-  })
-  
-  output$qualityplot <- renderHighchart({
-    quality()
-    
-    
-  })
-  
-  
-  ## +++++++++Bubble plot #####
-  bubble <- reactive({
-    bubble_dat <- data() %>%
-      mutate(
-        nsize = tp+fp+tn+fn,
-        study = paste0(study, " (", year, ")")
-      ) %>%
-      rename(Prevalence = prev, Sensitivity = se, Specificity = sp) %>%
-      pivot_longer(cols = c(Prevalence, Sensitivity, Specificity))
-    
-    hchart(bubble_dat,
-           'scatter', 
-           hcaes(x = name, y = value, size = nsize, group = study),
-           maxSize = "10%"
-    ) %>%
-      hc_chart(inverted = TRUE) %>%
-      hc_yAxis(
-        min = 0,
-        max = 1,
-        gridLineWidth = 0,
-        title = list(text = "")) %>%
-      hc_xAxis(
-        title = list(text = ""))
-    
-  })
-  
-  output$bubbleplot <- renderHighchart({
-    bubble()
-  })
-  
-  ## ++++++Create Nomogram #####
-  output$nomogram <- renderPlot({
-    pl_nomo <- nomogrammer(
-      Prevalence = input$pat_prev / 100,
-      Sens = diag()$se,
-      Spec = diag()$sp
-    ) + scale_color_manual(values = c("#e74c3c", "#00a65a"))
-    return(pl_nomo)
-  })
-  
-  ## +++++++++Item PPV and NPV #####
-  post_test <- reactive({
-    ## Calculate post test probability
-    
-    prior_prob  <-  input$pat_prev / 100
-    prior_odds  <- odds(prior_prob)
-    sensitivity <- min(diag()$se, 0.99999)
-    specificity <- min(diag()$sp, 0.99999)
-    PLR <- sensitivity / (1 - specificity)
-    NLR <- (1 - sensitivity) / specificity
-    post_odds_pos  <- prior_odds * PLR
-    post_odds_neg  <- prior_odds * NLR
-    post_prob_pos  <- post_odds_pos / (1 + post_odds_pos)
-    post_prob_neg  <- post_odds_neg / (1 + post_odds_neg)
-    
-    return(list("post_prob_pos" = post_prob_pos,
-                "post_prob_neg" = post_prob_neg))
-  })
-  
-  output$post_test_pos <- renderValueBox({
-    valueBox(
-      paste0(round(post_test()$post_prob_pos * 100), " %"),
-      color = "green",
-      subtitle = "Probability that your patient has the disorder after a positive test",
-      width = 6
-    )
-  })
-  
-  output$post_test_neg <- renderValueBox({
-    valueBox(
-      paste0(round(post_test()$post_prob_neg * 100), " %"),
-      color = "red",
-      subtitle = "Probability that your patient has the disorder after a negative test",
-      width = 6
-    )
-  })
-  
-  
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  ##            TAB: MY PATIENTS ####
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  
-  ## +++Update input for each level #####
+  ## SELECT INPUT AND UPDATE CHOICES FOR EACH LEVEL (TAB:: MY PATIENT)
   observe({
     tests_level1 <- dplyr::filter(tests, level == "level1")
     choices <- unique(tests_level1$disease)
@@ -748,9 +418,9 @@ server <- function(input, output, session) {
                                choices = choices)
   })
   
-  ## +++ Output
-  ## ++++++Which tests should I select? #####
-  ## +++++++++Table with ranked tests #####
+  ## CALCULATIONS (TAB:: MY PATIENT)
+  
+  ## ARRANGE TESTS
   mypat_db <- reactive({
     req(input$disorder_list)
     ## COMBINED SE AND SP
@@ -771,11 +441,13 @@ server <- function(input, output, session) {
              `Positive LR` = lr_pos, `Negative LR` = lr_neg)
   })
   
+  ## OUTPUT (TAB:: MY PAT)
   output$mypat_db = DT::renderDataTable({
-    ## add colors
+    ## colors
     clrs <- round(seq(255, 40, length.out = length(seq(0,1,0.05)) + 1), 0) %>%
       {paste0("rgb(255,", ., ",", ., ")")}
-
+    #datatable(df) %>% formatStyle(names(df), backgroundColor = styleInterval(brks, clrs))
+    
     ## DT
     mypat_db() %>%
       DT::datatable(data = .,
@@ -806,8 +478,7 @@ server <- function(input, output, session) {
       )
   })
   
-    ## ++++++Patient? #####
-    ## +++++++++Calculate combined Se and Sp for SERIAL and PAR #####
+  ## CALCULATE COMBINED SENSITIVITY/SPECIFICTY
   post_test_mypat <- reactive({
     req(input$disorder_list)
     req(input$test_list)
@@ -871,9 +542,193 @@ server <- function(input, output, session) {
     return(post_test_mypat)
   })
   
+  ## OUTPUT TEXT
+  output$nstudies <- renderText({
+    nrow(data())
+    
+  })
+  
+  ## CALCULATE SENSITIVITY/SPECIFICITY/PREVALENCE
+  diag <- reactive({
+    req(input$disorder)
+    req(input$patpop)
+    req(input$level)
+    req(input$tests)
+    
+    ## filter pooled dataset
+    tests_pooled_filter <- tests_pooled() %>%
+      filter(
+        disease == input$disorder,
+        population == input$patpop,
+        level == input$level,
+        test == input$tests
+      )
+    
+    ## create empty list to save results
+    diag <- list()
+    
+    ## prevalence
+    diag[["prev"]] <- tests_pooled_filter$prev
+    
+    ## sensitivity
+    diag[["se"]] <- tests_pooled_filter$se
+    
+    ## specificity
+    diag[["sp"]] <- tests_pooled_filter$sp
+    
+    return(diag)
+  })
+  
+  ## CREATE GAUGES
+  output$se <- renderHighchart({
+    highchart() %>%
+      hc_chart(type = "solidgauge") %>%
+      hc_pane(
+        startAngle = -90,
+        endAngle = 90,
+        background = list(
+          outerRadius = '100%',
+          innerRadius = '60%',
+          shape = "arc"
+        )
+      ) %>%
+      hc_tooltip(enabled = FALSE) %>%
+      hc_yAxis(
+        stops = list_parse2(col_stops),
+        lineWidth = 0,
+        minorTickWidth = 0,
+        tickAmount = 2,
+        min = 0,
+        max = 100,
+        labels = list(y = 26, style = list(fontSize = "22px"))
+      ) %>%
+      hc_add_series(
+        data = round(diag()$se, 3) * 100,
+        dataLabels = list(
+          y = -50,
+          borderWidth = 0,
+          useHTML = TRUE,
+          style = list(fontSize = "40px")
+        )
+      ) %>%
+      hc_size(height = 300)
+  })
+  
+  output$sp <- renderHighchart({
+    highchart() %>%
+      hc_chart(type = "solidgauge") %>%
+      hc_pane(
+        startAngle = -90,
+        endAngle = 90,
+        background = list(
+          outerRadius = '100%',
+          innerRadius = '60%',
+          shape = "arc"
+        )
+      ) %>%
+      hc_tooltip(enabled = FALSE) %>%
+      hc_yAxis(
+        stops = list_parse2(col_stops),
+        lineWidth = 0,
+        minorTickWidth = 0,
+        tickAmount = 2,
+        min = 0,
+        max = 100,
+        labels = list(y = 26, style = list(fontSize = "22px"))
+      ) %>%
+      hc_add_series(
+        data = round(diag()$sp, 3) * 100,
+        dataLabels = list(
+          y = -50,
+          borderWidth = 0,
+          useHTML = TRUE,
+          style = list(fontSize = "40px")
+        )
+      ) %>%
+      hc_size(height = 300)
+  })
+  
+  output$prev <- renderHighchart({
+    highchart() %>%
+      hc_chart(type = "solidgauge") %>%
+      hc_pane(
+        startAngle = -90,
+        endAngle = 90,
+        background = list(
+          outerRadius = '100%',
+          innerRadius = '60%',
+          shape = "arc"
+        )
+      ) %>%
+      hc_tooltip(enabled = FALSE) %>%
+      hc_yAxis(
+        #stops = list_parse2(col_stops),
+        lineWidth = 0,
+        minorTickWidth = 0,
+        tickAmount = 2,
+        min = 0,
+        max = 100,
+        labels = list(y = 26, style = list(fontSize = "22px"))
+      ) %>%
+      hc_add_series(
+        data = round(diag()$prev, 3) * 100,
+        dataLabels = list(
+          y = -50,
+          borderWidth = 0,
+          useHTML = TRUE,
+          style = list(fontSize = "40px")
+        )
+      ) %>%
+      hc_size(height = 300)
+  })
+  
  
-  ## ++++++Patient specific NPV and PPV #####
-  ## ++++++++++PPV #####
+  output$prev_item <- renderHighchart2({
+    ## save input
+    Prev <- diag()$prev
+    Sp <- diag()$sp
+    Se <- diag()$se
+    
+    PAT <- round(100 * Prev)
+    HEALTH <- 100 - PAT
+    
+    TP <- round(Se * PAT)
+    TN <- round(Sp * HEALTH)
+    FN <- PAT - TP
+    FP <- HEALTH - TN
+    
+    df2 <- tibble(
+      type = c("TP", "FN", "TN", "FP"),
+      amount = c(TP, FN, TN, FP),
+      faico = c("user-injured", "user-injured", "user", "user"),
+      col = c("#D35400", "#F89101", "#3CAB48", "#FFCD01")
+    )
+    
+    df2 <- df2 %>%
+      mutate(
+        uri = map2_chr(faico, col, ~ fa_to_png_to_datauri(.x, fill = .y)),
+        marker = map(uri, ~ list(
+          symbol = str_glue("url({data_uri})", data_uri = .x)
+        ))
+      )
+    
+    hchart(
+      df2,
+      "item",
+      hcaes(name = type, y = amount),
+      name = "Test result",
+      showInLegend = TRUE
+    ) %>%
+      hc_plotOptions(# avoid hide series due bug
+        series = list(point = list(events = list(
+          legendItemClick = JS("function(e) {e.preventDefault() }")
+        )))) %>%
+      hc_legend(labelFormat =  '{name} <span style="opacity: 0.4">{y}</span>') %>%
+      hc_colors(pull(df2, col))
+    
+  })
+  
+  ## PATIENTSPECIFIC PPV and NPV
   output$mypat_ppv_s <- renderGauge({
     gauge(
       value = round(post_test_mypat()$post_prob_pos_s, 3) * 100,
@@ -934,17 +789,146 @@ server <- function(input, output, session) {
     )
   })
   
+  ## CREATE NOMOGRAM
+  output$nomogram <- renderPlot({
+    pl_nomo <- nomogrammer(
+      Prevalence = input$pat_prev / 100,
+      Sens = diag()$se,
+      Spec = diag()$sp
+    ) + scale_color_manual(values = c("#e74c3c", "#00a65a"))
+    return(pl_nomo)
+  })
   
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  ##            TAB: ALL DATA####
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  ## OVERALL QUALITY OF INCLUDED STUDIES
+  quality <- reactive({
+    qual_dat <- data() %>%
+      mutate(
+        Score = round(score / maxscore, 3) * 100,
+        Study = paste0(study, " (", year, ")")
+      )
+    
+    hchart(qual_dat,
+           "bullet",
+           hcaes(x = Study, y = Score, target = 100),
+           color = "black",
+           name = "Quality score (%)") %>%
+      hc_chart(inverted = TRUE) %>%
+      hc_yAxis(
+        min = 0,
+        max = 100,
+        gridLineWidth = 0,
+        plotBands = list(
+          list(
+            from = 0,
+            to = 50,
+            color = "#e74c3c"
+          ),
+          list(
+            from = 50,
+            to = 80,
+            color = "#f39c12"
+          ),
+          list(
+            from = 80,
+            to = 100,
+            color = "#00a65a"
+          )
+        )
+      ) %>%
+      hc_xAxis(gridLineWidth = 15,
+               gridLineColor = "white") %>%
+      hc_plotOptions(series = list(
+        pointPadding = 0.25,
+        pointWidth = 15,
+        borderWidth = 0,
+        targetOptions = list(width = '200%')
+      )) %>%
+      hc_size(height = 300)
+    
+  })
+  
+  output$qualityplot <- renderHighchart({
+    quality()
+    
+    
+  })
+  
+  
+  ## OVERALL QUALITY OF INCLUDED STUDIES
+  bubble <- reactive({
+    bubble_dat <- data() %>%
+      mutate(
+        nsize = tp+fp+tn+fn,
+        study = paste0(study, " (", year, ")")
+      ) %>%
+      rename(Prevalence = prev, Sensitivity = se, Specificity = sp) %>%
+      pivot_longer(cols = c(Prevalence, Sensitivity, Specificity))
+    
+    hchart(bubble_dat,
+           'scatter', 
+           hcaes(x = name, y = value, size = nsize, group = study),
+           maxSize = "10%"
+    ) %>%
+      hc_chart(inverted = TRUE) %>%
+      hc_yAxis(
+        min = 0,
+        max = 1,
+        gridLineWidth = 0,
+        title = list(text = "")) %>%
+      hc_xAxis(
+        title = list(text = ""))
+    
+  })
+  
+  output$bubbleplot <- renderHighchart({
+    bubble()
+  })
+  
+  
+  ## POST-TEST PROBABILITIES
+  
+  post_test <- reactive({
+    ## Calculate post test probability
+    
+    prior_prob  <-  input$pat_prev / 100
+    prior_odds  <- odds(prior_prob)
+    sensitivity <- min(diag()$se, 0.99999)
+    specificity <- min(diag()$sp, 0.99999)
+    PLR <- sensitivity / (1 - specificity)
+    NLR <- (1 - sensitivity) / specificity
+    post_odds_pos  <- prior_odds * PLR
+    post_odds_neg  <- prior_odds * NLR
+    post_prob_pos  <- post_odds_pos / (1 + post_odds_pos)
+    post_prob_neg  <- post_odds_neg / (1 + post_odds_neg)
+    
+    return(list("post_prob_pos" = post_prob_pos,
+                "post_prob_neg" = post_prob_neg))
+  })
+  
+  output$post_test_pos <- renderValueBox({
+    valueBox(
+      paste0(round(post_test()$post_prob_pos * 100), " %"),
+      color = "green",
+      subtitle = "Probability that your patient has the disorder after a positive test",
+      width = 6
+    )
+  })
+  
+  output$post_test_neg <- renderValueBox({
+    valueBox(
+      paste0(round(post_test()$post_prob_neg * 100), " %"),
+      color = "red",
+      subtitle = "Probability that your patient has the disorder after a negative test",
+      width = 6
+    )
+  })
   
   ## OUTPUT (TAB:: ALL DATA)
   output$dt_tests = DT::renderDataTable({
     tests
   })
   
-  ## +++Download function #####
+  ## DOWNLOAD
   output$download <- downloadHandler(
     filename = function() {
       paste0("alldata.csv")
