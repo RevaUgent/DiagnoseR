@@ -114,11 +114,11 @@ ui <- navbarPage(
   tabPanel(
     "Info",
     icon = icon("info"),
-    InfoUI(),
-    downloadButton(
-      "download", 
-      label = "Download .csv"
-    )
+    InfoUI()#,
+    # downloadButton(
+    #   "download", 
+    #   label = "Download .csv"
+    # )
   ),
   ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   ##            TAB: DIAGNOSTIC TESTS ####

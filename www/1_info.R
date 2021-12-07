@@ -3,14 +3,11 @@ InfoUI <- function() {
   tagList(
       h2("BackpocketPhysio project"),
       HTML(
-      "<p>The BackpocketPhysio project tries to translate science within the Physiotherapist to the daily practice.
-      The current BackpocketPhysio › Diagnosis APP aims to set-up a datbase that includes all diagnostics tests that are
-      applied in a physiotherapy practice. The dataset with all information can also be downloaded from the website,
-      and is free to use by anyone.</p> <br>
-      <p></p>"
-      ),
-      HTML(
-      "<p>The project is coordinated by the Department of Rehabilation Sciences at Ghent University.</p>"
+      "<p>The aim of BackpocketPhysio project is to translate science the the daily practice of the physiotherapist/manual therapist.
+      There are different apps in development, and the current BackpocketPhysio › Diagnosis APP aims to set-up a datbase that includes 
+      information on a wide arnge of diagnostics tests that have been validated in peer-reviewed journals. All includes tests should be applicaple
+      in a clinical setting. Based on this information, dataset is complied, and can be freely used by everyone. </p> <br>
+      <p>Feedback or requests for functionality are always welcomed and can be sent by email to Robby.DePauw@Ugent.be.</p>"
       ),
       HTML(
       "<h2><i class='fa fa-vial'></i>&nbsp; Diagnostic Tests</h2>"
@@ -29,23 +26,30 @@ InfoUI <- function() {
       probability of having the disease. This is the reason why the PPV and NPV are often useless in the context of a scientific article
       as the a priori probability of being sick is often overestimated (e.g., in diagnostic studies the number of patients often equals
       the number of non-patients). In contrast the Se and Sp is insensible to the a priori probability, which explains their popularity in
-      the scientific literature."
+      the scientific literature. In addition, this tab will allow you to get insight into the quality of the different included studies and the ranges of diagnostic outcomes that
+      they have been reported."
       ),
       HTML(
       "<h2><i class='fa fa-user-md'></i>&nbsp; My Patients</h2>"),
       p(
-      "This tab focuses on the translation of test combinations in your practice. 
-      It allows you to select multiple test that you want to perform in practice,
-      and check what the probability is of your patients haveing or not having the 
-      disease when all performed tests are negative or at least one test is negative."
+      "This tab focuses on the direct translation of clinical questions based on sound scientific research. You can sleect the complaints of your patient,
+      and diferent tests will be proposed base don the current scientific evidence. You can select a pre-test probability based on your clinical judgement for
+      up to three diagnostic priorities. Based on the result of the test, post-test probabilities will be calculated to support the clinical decision making process."
       ),
       HTML(
       "<h2><i class='fa fa-table'></i>&nbsp; All data</h2>"
       ),
       HTML(
       "<p>In the <b>All Data</b> tab, you will find all the studies that are included 
-      in the current dataset. If you wish to include more studies,
-      you can always fill in the following <a href='https://forms.gle/fm9THiUFyhMCjdj69'>survey</a></p>"
+      in the current dataset. You can also find a download link to the table in diferent formats such as .csv and .xlsx."
+      ),
+      HTML(
+        "<h2><i class='fa fa-hands-helping'></i>&nbsp; Participate</h2>"
+      ),
+      HTML(
+        "<p>In the <b>Participate</b> tab, you can find the link to the survey which allows you to participate to the survey. To do so, 
+        please use the following <a href='https://forms.gle/fm9THiUFyhMCjdj69'>survey</a>. We have also included a list of participants we wish to acknowledge for their
+        input.</p>"
       )
   )
 }
