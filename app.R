@@ -17,6 +17,7 @@ library(fontawesome)
 library(extrafont)
 library(rsvg)
 library(stringr)
+library(googlesheets4)
 #library(waffle)
 #library(hrbrthemes)
 
@@ -30,8 +31,30 @@ source("www/1_info.R")
 
 
 ##+++++++++++++++++++++++++++ Load data ++++++++++++++++++++++++++++++++++++++
+# tests <- tidyr::pivot_longer(
+#   openxlsx::read.xlsx("www/tests.xlsx"),
+#   cols = c(level0, level1),
+#   names_to = "level",
+#   values_to = "disease"
+# ) %>%
+#   rowwise() %>%
+#   dplyr::mutate(prev = round((tp + fp) / (tp + fp + tn + fn), 3),
+#                 se = round((tp) / (tp + fp), 3),
+#                 sp = round((tn) / (tn + fn), 3),
+#                 lr_pos = round(min(se,0.999)/(1-min(sp,0.999)),2),
+#                 lr_neg = round((1-min(sp,0.999))/min(se,0.999),3))
+
+allinfo <- read.csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vTBnv4lcKomAFux1P8Sl9nq8TQa8PSvllNN6KH2TrOLB4G4FCtLdepS4ugY8sVoX7luK20tYcoz6LE6/pub?gid=1859884833&single=true&output=csv")
+colnames(allinfo) <- c("Time", "study", "year", "level0", "level1", 
+                       "population", "test", "reference", "tp", 
+                       "fp", "fn", "tn", "maxscore", "score", 
+                       "doi", "name", "country")
+
+## Create test database
 tests <- tidyr::pivot_longer(
-  openxlsx::read.xlsx("www/tests.xlsx"),
+  allinfo[c("study", "year", "level0", "level1", 
+            "population", "test", "reference", "tp", 
+            "fp", "fn", "tn", "maxscore", "score")],
   cols = c(level0, level1),
   names_to = "level",
   values_to = "disease"
@@ -42,6 +65,22 @@ tests <- tidyr::pivot_longer(
                 sp = round((tn) / (tn + fn), 3),
                 lr_pos = round(min(se,0.999)/(1-min(sp,0.999)),2),
                 lr_neg = round((1-min(sp,0.999))/min(se,0.999),3))
+
+## Create pooled database
+tests_pooled <- tests %>%
+    dplyr::group_by(level, disease, population, test) %>%
+    dplyr::summarise(
+      tp = sum(tp),
+      fp = sum(fp),
+      tn = sum(tn),
+      fn = sum(fn)
+    ) %>%
+    rowwise() %>%
+    dplyr::mutate(prev = round((tp + fp) / (tp + fp + tn + fn), 3),
+                  se = round((tp) / (tp + fp), 3),
+                  sp = round((tn) / (tn + fn), 3),
+                  lr_pos = min(se,0.999)/(1-min(sp,0.999)),
+                  lr_neg =(1-min(sp,0.999))/min(se,0.999))
 
 ##+++++++++++++++++++++++++++ HELPERS ++++++++++++++++++++++++++++++++++++++
 myGauge <- function(id, label, value) {
@@ -56,6 +95,10 @@ col_stops <- data.frame(
   c = c('#e74c3c', '#f39c12', '#00a65a'),
   stringsAsFactors = FALSE
 )
+
+##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+##            UI ####
+##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 ##+++++++++++++++++++++++++++ Graphical UI +++++++++++++++++++++++++++++++++++
 ui <- navbarPage(
@@ -237,29 +280,70 @@ ui <- navbarPage(
       sidebarPanel(
         fluid = TRUE,
         selectInput(
-          inputId = "disorder_list",
+          inputId = "patpop_list",
           label = "Patient population",
           choices = NULL
         ),
         selectInput(
-          inputId = "patpop_mypat",
-          label = "Disorder",
+          inputId = "mypat_dis_1",
+          label = "Disorder (1)",
           choices = NULL
         ),
         sliderInput(
-          inputId = "pat_prev_mypat",
-          label = "Pre-test probability",
+          inputId = "mypat_prob_1",
+          label = "Pre-test probability disorder (1)",
+          value = 50,
+          min = 0,
+          max = 100
+        ),
+        selectInput(
+          inputId = "mypat_dis_2",
+          label = "Disorder (2)",
+          choices = NULL
+        ),
+        sliderInput(
+          inputId = "mypat_prob_2",
+          label = "Pre-test probability disorder (2)",
+          value = 50,
+          min = 0,
+          max = 100
+        ),
+        selectInput(
+          inputId = "mypat_dis_3",
+          label = "Disorder (3)",
+          choices = NULL
+        ),
+        sliderInput(
+          inputId = "mypat_prob_3",
+          label = "Pre-test probability disorder (3)",
           value = 50,
           min = 0,
           max = 100
         )
       ),
-      mainPanel(tabsetPanel(
-        tabPanel(title = "Which test should I select?",
-                 h1("Table with tests"),
-                 DT::dataTableOutput("mypat_db")),
+      mainPanel(
+        tabsetPanel(
+          tabPanel(
+            title = "Overview of most suitable tests",
+            h1(
+              "Most suitable tests to detect",
+              textOutput("name_mypat_1", inline = T)
+            ),
+            DT::dataTableOutput("mypat_db_1"),
+            h1(
+              "Most suitable tests to detect",
+              textOutput("name_mypat_2", inline = T)
+            ),
+            DT::dataTableOutput("mypat_db_2"),
+            h1(
+              "Most suitable tests to detect",
+              textOutput("name_mypat_3", inline = T)
+            ),
+            DT::dataTableOutput("mypat_db_3")
+          ),
+          
         tabPanel(
-          title = "Patient",
+          title = "Results of your patient",
           h1("Identify probability of disease for your patient"),
           p(
             "In the list below, you can select the tests you have performed on your patient. It provides you with information on the
@@ -267,40 +351,92 @@ ui <- navbarPage(
           it does not make sense to select the individual tests as well."
           ),
           fluidRow(
-            checkboxGroupButtons(
-              inputId = "test_list",
-              label = "Test you wish to perform",
-              choices = c("None"),
-              checkIcon = list(
-                yes = tags$i(class = "fa fa-check-square",
-                             style = "color: steelblue"),
-                no = tags$i(class = "fa fa-square-o",
-                            style = "color: steelblue")
-              )
-            )
-          ),
-          fluidRow(
-            # actionButton(inputId = "testbutton", label = "Calculate"),
-            h3("How likely does my patient have the disorder?"),
-            # column(
-            #   h3("NPV"),
-            #   gaugeOutput("mypat_npv_s"),
-            #   width = 4,
-            #   align = "center"
-            # ),
-            column(
-              h4("My patients tests positive on all tests:"),
-              gaugeOutput("mypat_ppv_s"),
-              width = 6,
-              align = "center"
+            column(width = 12, h2("Which test would you like to select?")),
+            column(width = 4,
+                   h3("Test: ",textOutput("name_mypat_1_T", inline = TRUE)),
+                   radioGroupButtons(
+                     inputId = "mypat_test_1",
+                     choices = "",
+                     direction = "vertical", size = "lg", justified = TRUE
+                   ),
+                   radioGroupButtons(
+                     inputId = "mypat_test1_res",
+                     label = "Test result:", 
+                     choices = c(`<i class='fa fa-question'></i>` = "unkn", `<i class='fa fa-plus'></i>` = "pos", 
+                                 `<i class='fa fa-minus'></i>` = "neg"),
+                     justified = TRUE
+                   ),
+                   highchartOutput2("mypat_test1_graph")
+                   ),
+            column(width = 4,
+                   h3("Test: ",textOutput("name_mypat_2_T", inline = TRUE)),
+                   radioGroupButtons(
+                     inputId = "mypat_test_2",
+                     choices = "",
+                     direction = "vertical", size = "lg", justified = TRUE
+                   ),
+                   radioGroupButtons(
+                     inputId = "mypat_test2_res",
+                     label = "Test result:", 
+                     choices = c(`<i class='fa fa-question'></i>` = "unkn", `<i class='fa fa-plus'></i>` = "pos", 
+                                 `<i class='fa fa-minus'></i>` = "neg"),
+                     justified = TRUE
+                   ),
+                   highchartOutput2("mypat_test2_graph")
             ),
-            column(
-              h4("My patients tests positive on one of the tests:"),
-              gaugeOutput("mypat_ppv_p"),
-              width = 6,
-              align = "center"
+            column(width = 4,
+                   h3("Test: ",textOutput("name_mypat_3_T", inline = TRUE)),
+                   radioGroupButtons(
+                     inputId = "mypat_test_3",
+                     choices = "",
+                     direction = "vertical", size = "lg", justified = TRUE
+                   ),
+                   radioGroupButtons(
+                     inputId = "mypat_test3_res",
+                     label = "Test result:", 
+                     choices = c(`<i class='fa fa-question'></i>` = "unkn", `<i class='fa fa-plus'></i>` = "pos", 
+                                 `<i class='fa fa-minus'></i>` = "neg"),
+                     justified = TRUE
+                   ),
+                   highchartOutput2("mypat_test3_graph")
             )
           )
+         
+          # fluidRow(
+          #   checkboxGroupButtons(
+          #     inputId = "test_list",
+          #     label = "Test you wish to perform",
+          #     choices = c("None"),
+          #     checkIcon = list(
+          #       yes = tags$i(class = "fa fa-check-square",
+          #                    style = "color: steelblue"),
+          #       no = tags$i(class = "fa fa-square-o",
+          #                   style = "color: steelblue")
+          #     )
+          #   )
+          # ),
+          # fluidRow(
+          #   # actionButton(inputId = "testbutton", label = "Calculate"),
+          #   h3("How likely does my patient have the disorder?"),
+          #   # column(
+          #   #   h3("NPV"),
+          #   #   gaugeOutput("mypat_npv_s"),
+          #   #   width = 4,
+          #   #   align = "center"
+          #   # ),
+          #   column(
+          #     h4("My patients tests positive on all tests:"),
+          #     gaugeOutput("mypat_ppv_s"),
+          #     width = 6,
+          #     align = "center"
+          #   ),
+          #   column(
+          #     h4("My patients tests positive on one of the tests:"),
+          #     gaugeOutput("mypat_ppv_p"),
+          #     width = 6,
+          #     align = "center"
+          #   )
+          # )
         )
       ))
     )
@@ -310,8 +446,25 @@ ui <- navbarPage(
   ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   tabPanel("All data",
            icon = icon("table"),
-           DT::dataTableOutput("dt_tests"))
+           DT::dataTableOutput("dt_tests")),
+  
+  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  ##            TAB: PARTCIPATE ####
+  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  tabPanel("Participate",
+           icon = icon("hands-helping")
+           # HTML('<b>','Feedback','</b>'),
+           # tags$iframe(src = 'https://forms.gle/fm9THiUFyhMCjdj69',
+           #             width = '100%',
+           #             height = 1000,
+           #             frameborder = 0,
+           #             marginheight = 0)
+           )
 )
+
+##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+##            SERVER ####
+##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 ##+++++++++++++++++++++++++++ SERVER FXS +++++++++++++++++++++++++++++++++++++
 
@@ -321,28 +474,6 @@ server <- function(input, output, session) {
   ##            OVERALL FUNCTIONS ####
   ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   
-  ## Create pooled database #####
-  tests_pooled <- reactive({
-      tests <- tests %>%
-        dplyr::group_by(level, disease, population, test) %>%
-        dplyr::summarise(
-          tp = sum(tp),
-          fp = sum(fp),
-          tn = sum(tn),
-          fn = sum(fn)
-        ) %>%
-        rowwise() %>%
-        dplyr::mutate(prev = round((tp + fp) / (tp + fp + tn + fn), 3),
-                      se = round((tp) / (tp + fp), 3),
-                      sp = round((tn) / (tn + fn), 3),
-                      lr_pos = min(se,0.999)/(1-min(sp,0.999)),
-                      lr_neg =(1-min(sp,0.999))/min(se,0.999))
-
-    return(tests)
-    
-  })
-  
-  
   ## Filter pooled Se and Sp #####
   diag <- reactive({
     req(input$disorder)
@@ -351,7 +482,7 @@ server <- function(input, output, session) {
     req(input$tests)
     
     ## filter pooled dataset
-    tests_pooled_filter <- tests_pooled() %>%
+    tests_pooled_filter <- tests_pooled %>%
       filter(
         disease == input$disorder,
         population == input$patpop,
@@ -629,8 +760,6 @@ server <- function(input, output, session) {
   
   output$qualityplot <- renderHighchart({
     quality()
-    
-    
   })
   
   
@@ -713,71 +842,758 @@ server <- function(input, output, session) {
   
   
   ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  ##            TAB: MY PATIENTS ####
+  ##            TAB: MY PATIENT ####
   ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  
+
   ## +++Update input for each level #####
-  observe({
-    tests_level1 <- dplyr::filter(tests, level == "level1")
-    choices <- unique(tests_level1$disease)
-    updateSelectInput(inputId = "disorder_list", choices = choices)
+  mypat_level <- reactive({
+    mypat_level <- dplyr::filter(tests_pooled, level == "level1")
+    return(mypat_level)
   })
   
-  disorder_mypat <- reactive({
-    req(input$disorder_list)
-    disorder_mypat <- filter(tests, disease == input$disorder_list)
-    return(disorder_mypat)
+  observeEvent(mypat_level(), {
+    choices <- unique(mypat_level()$disease)
+    updateSelectInput(inputId = "patpop_list", choices = choices)
   })
   
-  observeEvent(disorder_mypat(), {
-    choices <- unique(disorder_mypat()$population)
-    updateSelectInput(inputId = "patpop_mypat", choices = choices)
+  mypat_disorder_lvl <- reactive({
+    req(input$patpop_list)
+    mypat_disorder_lvl <- filter(mypat_level(), disease == input$patpop_list)
+    return(mypat_disorder_lvl)
   })
   
-  patpop_mypat_dat <- reactive({
-    req(input$patpop_mypat)
-    patpop_mypat_dat <-
-      filter(disorder_mypat(), population == input$patpop_mypat)
-    return(patpop_mypat_dat)
+  ## DISORDER 1
+  
+  observeEvent(mypat_disorder_lvl(), {
+    choices <- unique(mypat_disorder_lvl()$population)
+    updateSelectInput(inputId = "mypat_dis_1", choices = choices)
   })
   
-  observeEvent(patpop_mypat_dat(), {
-    choices <- unique(patpop_mypat_dat()$test)
-    updateCheckboxGroupButtons(session = session,
-                               inputId = "test_list",
-                               choices = choices)
+  mypat_dat_1 <- reactive({
+    req(input$mypat_dis_1)
+    mypat_dat_1 <- filter(mypat_disorder_lvl(), population == input$mypat_dis_1)
+    return(mypat_dat_1)
   })
   
-  ## +++ Output
-  ## ++++++Which tests should I select? #####
-  ## +++++++++Table with ranked tests #####
-  mypat_db <- reactive({
-    req(input$disorder_list)
-    ## COMBINED SE AND SP
-    tmp <- filter(
-      tests_pooled(),
-      level == "level1",
-      disease == input$disorder_list
-    ) %>%
-      mutate(prev = round(prev,3),
-             se = round(se,3),
-             sp = round(sp,3),
-             lr_pos = round(lr_pos,2),
-             lr_neg = round(lr_neg,2)) %>%
+  output$name_mypat_1 <- renderText({
+    req(input$mypat_dis_1)
+    input$mypat_dis_1
+    
+  })
+  
+  output$name_mypat_1_T <- renderText({
+    req(input$mypat_dis_1)
+    input$mypat_dis_1
+    
+  })
+  
+  observeEvent(input$mypat_dis_1, {
+    req(mypat_dat_1())
+    choices <- unique(mypat_dat_1()$test)
+    updateRadioGroupButtons(inputId = "mypat_test_1", choices = choices, session = session)
+  })
+  
+  ## DISORDER 2
+  
+  observeEvent(mypat_disorder_lvl(), {
+    choices <- unique(mypat_disorder_lvl()$population)
+    updateSelectInput(inputId = "mypat_dis_2", choices = choices)
+  })
+  
+  mypat_dat_2 <- reactive({
+    req(input$mypat_dis_2)
+    mypat_dat_2 <- filter(mypat_disorder_lvl(), population == input$mypat_dis_2)
+    return(mypat_dat_2)
+  })
+  
+  output$name_mypat_2 <- renderText({
+    req(input$mypat_dis_2)
+    input$mypat_dis_2
+    
+  })
+  
+  output$name_mypat_2_T <- renderText({
+    req(input$mypat_dis_2)
+    input$mypat_dis_2
+    
+  })
+  
+  observeEvent(input$mypat_dis_2, {
+    req(mypat_dat_2())
+    choices <- unique(mypat_dat_2()$test)
+    updateRadioGroupButtons(inputId = "mypat_test_2", choices = choices, session = session)
+  })
+  
+  ## DISORDER 3
+  
+  observeEvent(mypat_disorder_lvl(), {
+    choices <- unique(mypat_disorder_lvl()$population)
+    updateSelectInput(inputId = "mypat_dis_3", choices = choices)
+  })
+  
+  mypat_dat_3 <- reactive({
+    req(input$mypat_dis_3)
+    mypat_dat_3 <- filter(mypat_disorder_lvl(), population == input$mypat_dis_3)
+    return(mypat_dat_3)
+  })
+  
+  output$name_mypat_3 <- renderText({
+    req(input$mypat_dis_3)
+    input$mypat_dis_3
+    
+  })
+  
+  output$name_mypat_3_T <- renderText({
+    req(input$mypat_dis_3)
+    input$mypat_dis_3
+    
+  })
+  
+  observeEvent(input$mypat_dis_3, {
+    req(mypat_dat_3())
+    choices <- unique(mypat_dat_3()$test)
+    updateRadioGroupButtons(inputId = "mypat_test_3", choices = choices, session = session)
+  })
+  
+  # +++ Output
+  # ++++++Which tests should I select? #####
+  # +++++++++Table with ranked tests #####
+  
+  ## DISORDER 1
+  
+  mypat_db_1 <- eventReactive(mypat_dat_1(),{
+
+    mypat_db_1 <- mypat_dat_1() %>%
       ungroup() %>%
-      mutate(ord = -(se + sp)) %>%
+      mutate(ord = -(se + sp),
+             lr_pos = round(lr_pos, 2),
+             lr_neg = round(lr_neg, 2)) %>%
       arrange(ord) %>%
       select(Test = test, Sensitvity = se, Specificity = sp, Prevalence = prev,
              `Positive LR` = lr_pos, `Negative LR` = lr_neg)
+    
+    return(mypat_db_1)
   })
   
-  output$mypat_db = DT::renderDataTable({
+  output$mypat_db_1 <- DT::renderDataTable({
     ## add colors
     clrs <- round(seq(255, 40, length.out = length(seq(0,1,0.05)) + 1), 0) %>%
       {paste0("rgb(255,", ., ",", ., ")")}
-
+    
     ## DT
-    mypat_db() %>%
+    mypat_db_1() %>%
+      DT::datatable(data = .,
+                    style = "bootstrap",
+                    options = list(pageLength = 4,
+                                   dom = 't')) %>%
+      DT::formatStyle(
+        'Sensitvity',
+        #backgroundColor = DT::styleInterval(seq(0,1,0.05), clrs),
+        background = DT::styleColorBar(seq(0,1,0.05), "#00a65a"),
+        backgroundSize = '95% 95%',
+        backgroundRepeat = 'no-repeat',
+        backgroundPosition = 'center'
+      ) %>%
+      DT::formatStyle(
+        'Specificity',
+        background = DT::styleColorBar(seq(0,1,0.05), "#00a65a"),
+        backgroundSize = '95% 95%',
+        backgroundRepeat = 'no-repeat',
+        backgroundPosition = 'center'
+      )
+  })
+  
+  ## DISORDER 2
+  
+  mypat_db_2 <- eventReactive(mypat_dat_2(),{
+    
+    mypat_db_2 <- mypat_dat_2() %>%
+      ungroup() %>%
+      mutate(ord = -(se + sp),
+             lr_pos = round(lr_pos, 2),
+             lr_neg = round(lr_neg, 2)) %>%
+      arrange(ord) %>%
+      select(Test = test, Sensitvity = se, Specificity = sp, Prevalence = prev,
+             `Positive LR` = lr_pos, `Negative LR` = lr_neg)
+    
+    return(mypat_db_2)
+  })
+  
+  output$mypat_db_2 <- DT::renderDataTable({
+    ## add colors
+    clrs <- round(seq(255, 40, length.out = length(seq(0,1,0.05)) + 1), 0) %>%
+      {paste0("rgb(255,", ., ",", ., ")")}
+    
+    ## DT
+    mypat_db_2() %>%
+      DT::datatable(data = .,
+                    style = "bootstrap",
+                    options = list(pageLength = 4,
+                                   dom = 't')) %>%
+      DT::formatStyle(
+        'Sensitvity',
+        #backgroundColor = DT::styleInterval(seq(0,1,0.05), clrs),
+        background = DT::styleColorBar(seq(0,1,0.05), "#00a65a"),
+        backgroundSize = '95% 95%',
+        backgroundRepeat = 'no-repeat',
+        backgroundPosition = 'center'
+      ) %>%
+      DT::formatStyle(
+        'Specificity',
+        background = DT::styleColorBar(seq(0,1,0.05), "#00a65a"),
+        backgroundSize = '95% 95%',
+        backgroundRepeat = 'no-repeat',
+        backgroundPosition = 'center'
+      )
+  })
+  
+  ## DISORDER 3
+  
+  mypat_db_3 <- eventReactive(mypat_dat_3(),{
+    
+    mypat_db_3 <- mypat_dat_3() %>%
+      ungroup() %>%
+      mutate(ord = -(se + sp),
+             lr_pos = round(lr_pos, 2),
+             lr_neg = round(lr_neg, 2)) %>%
+      arrange(ord) %>%
+      select(Test = test, Sensitvity = se, Specificity = sp, Prevalence = prev,
+             `Positive LR` = lr_pos, `Negative LR` = lr_neg)
+    
+    return(mypat_db_3)
+  })
+  
+  output$mypat_db_3 <- DT::renderDataTable({
+    ## add colors
+    clrs <- round(seq(255, 40, length.out = length(seq(0,1,0.05)) + 1), 0) %>%
+      {paste0("rgb(255,", ., ",", ., ")")}
+    
+    ## DT
+    mypat_db_3() %>%
+      DT::datatable(data = .,
+                    style = "bootstrap",
+                    options = list(pageLength = 4,
+                                   dom = 't')) %>%
+      DT::formatStyle(
+        'Sensitvity',
+        #backgroundColor = DT::styleInterval(seq(0,1,0.05), clrs),
+        background = DT::styleColorBar(seq(0,1,0.05), "#00a65a"),
+        backgroundSize = '95% 95%',
+        backgroundRepeat = 'no-repeat',
+        backgroundPosition = 'center'
+      ) %>%
+      DT::formatStyle(
+        'Specificity',
+        background = DT::styleColorBar(seq(0,1,0.05), "#00a65a"),
+        backgroundSize = '95% 95%',
+        backgroundRepeat = 'no-repeat',
+        backgroundPosition = 'center'
+      )
+  })
+  
+
+  # +++++++++Results of each test #####
+  output$mypat_test1_graph <- renderHighchart2({
+    
+    # input$mypat_test_1 <- "ROM"
+    # input$mypat_test1_res <- "pos"
+    
+    tmp <- tests_pooled %>%
+      filter(level == "level1", test == input$mypat_test_1, 
+             disease == input$patpop_list, 
+             population == input$mypat_dis_1)
+    
+    se <- min(tmp$se, 0.999)
+    sp <- min(tmp$sp,0.999)
+    pre <- (input$mypat_prob_1/100)
+    
+    prior_odds  <- odds(pre)
+    PLR <- se / (1 - sp)
+    NLR <- (1 - se) / sp
+    post_odds_pos  <- prior_odds * PLR
+    post_odds_neg  <- prior_odds * NLR
+    post_prob_pos  <- post_odds_pos / (1 + post_odds_pos)
+    post_prob_neg  <- post_odds_neg / (1 + post_odds_neg)
+    
+    if (input$mypat_test1_res == "pos") {
+      
+      ## Create dataset
+      df <- tibble(pre = pre, post = post_prob_pos)
+      df_l <- pivot_longer(df, cols = c(pre, post))
+      df_l$name <- factor(df_l$name, c("pre", "post"), c("Pre", "Post"))
+      
+      ## create graph
+      hc <- df_l %>%
+        hchart('column', hcaes(x = name, y = value*100)) %>%
+        hc_exporting(enabled = TRUE) %>%
+        hc_add_theme(hc_theme_smpl()) %>%
+        hc_xAxis(title = list(text = "")) %>%
+        hc_colors(c("black", "black")) %>%
+        hc_yAxis(title = list(text = "Probability"),
+                 min = 0,
+                 max = 100,
+                 plotBands = list(
+                   list(
+                     from = 80,
+                     to = 100,
+                     color = hex_to_rgba("green", 0.1),
+                     label = list(text = "Present", rotation = -90, align = "left"),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 20,
+                     to = 80,
+                     color = hex_to_rgba("orange", 0.1),
+                     label = list(text = "Undecided", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 0,
+                     to = 20,
+                     color = hex_to_rgba("red", 0.1),
+                     label = list(text = "Absent", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   )
+                 )) %>%
+        hc_tooltip(valueDecimals = 1, valueSuffix = "/100%") %>%
+        hc_plotOptions(series = list(colorByPoint = TRUE))
+      
+    }
+    
+    if (input$mypat_test1_res == "neg") {
+      ## Create dataset
+      df <- tibble(pre = pre, post = post_prob_neg)
+      df_l <- pivot_longer(df, cols = c(pre, post))
+      df_l$name <- factor(df_l$name, c("pre", "post"), c("Pre", "Post"))
+      
+      ## create graph
+      hc <- df_l %>%
+        hchart('column', hcaes(x = name, y = value*100)) %>%
+        hc_exporting(enabled = TRUE) %>%
+        hc_add_theme(hc_theme_smpl()) %>%
+        hc_xAxis(title = list(text = "")) %>%
+        hc_colors(c("black", "black")) %>%
+        hc_yAxis(title = list(text = "Probability"),
+                 min = 0,
+                 max = 100,
+                 plotBands = list(
+                   list(
+                     from = 80,
+                     to = 100,
+                     color = hex_to_rgba("green", 0.1),
+                     label = list(text = "Present", rotation = -90, align = "left"),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 20,
+                     to = 80,
+                     color = hex_to_rgba("orange", 0.1),
+                     label = list(text = "Undecided", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 0,
+                     to = 20,
+                     color = hex_to_rgba("red", 0.1),
+                     label = list(text = "Absent", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   )
+                 )) %>%
+        hc_tooltip(valueDecimals = 1, valueSuffix = "/100%") %>%
+        hc_plotOptions(series = list(colorByPoint = TRUE))
+    }
+    
+    if (input$mypat_test1_res == "unkn") {
+      ## Create dataset
+      df <- tibble(pre = pre, post = pre)
+      df_l <- pivot_longer(df, cols = c(pre, post))
+      df_l$name <- factor(df_l$name, c("pre", "post"), c("Pre", "Post"))
+      
+      ## create graph
+      hc <- df_l %>%
+        hchart('column', hcaes(x = name, y = value*100)) %>%
+        hc_exporting(enabled = TRUE) %>%
+        hc_add_theme(hc_theme_smpl()) %>%
+        hc_xAxis(title = list(text = "")) %>%
+        hc_colors(c("black", "black")) %>%
+        hc_yAxis(title = list(text = "Probability"),
+                 min = 0,
+                 max = 100,
+                 plotBands = list(
+                   list(
+                     from = 80,
+                     to = 100,
+                     color = hex_to_rgba("green", 0.1),
+                     label = list(text = "Present", rotation = -90, align = "left"),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 20,
+                     to = 80,
+                     color = hex_to_rgba("orange", 0.1),
+                     label = list(text = "Undecided", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 0,
+                     to = 20,
+                     color = hex_to_rgba("red", 0.1),
+                     label = list(text = "Absent", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   )
+                 )) %>%
+        hc_tooltip(valueDecimals = 1, valueSuffix = "/100%") %>%
+        hc_plotOptions(series = list(colorByPoint = TRUE))
+    }
+
+    hc
+  })
+  
+  output$mypat_test2_graph <- renderHighchart2({
+    
+    # input$mypat_test_1 <- "ROM"
+    # input$mypat_test1_res <- "pos"
+    
+    tmp <- tests_pooled %>%
+      filter(level == "level1", test == input$mypat_test_2, 
+             disease == input$patpop_list, 
+             population == input$mypat_dis_2)
+    
+    se <- min(tmp$se, 0.999)
+    sp <- min(tmp$sp,0.999)
+    pre <- (input$mypat_prob_2/100)
+    
+    prior_odds  <- odds(pre)
+    PLR <- se / (1 - sp)
+    NLR <- (1 - se) / sp
+    post_odds_pos  <- prior_odds * PLR
+    post_odds_neg  <- prior_odds * NLR
+    post_prob_pos  <- post_odds_pos / (1 + post_odds_pos)
+    post_prob_neg  <- post_odds_neg / (1 + post_odds_neg)
+    
+    if (input$mypat_test2_res == "pos") {
+      
+      ## Create dataset
+      df <- tibble(pre = pre, post = post_prob_pos)
+      df_l <- pivot_longer(df, cols = c(pre, post))
+      df_l$name <- factor(df_l$name, c("pre", "post"), c("Pre", "Post"))
+      
+      ## create graph
+      hc <- df_l %>%
+        hchart('column', hcaes(x = name, y = value*100)) %>%
+        hc_exporting(enabled = TRUE) %>%
+        hc_add_theme(hc_theme_smpl()) %>%
+        hc_xAxis(title = list(text = "")) %>%
+        hc_colors(c("black", "black")) %>%
+        hc_yAxis(title = list(text = "Probability"),
+                 min = 0,
+                 max = 100,
+                 plotBands = list(
+                   list(
+                     from = 80,
+                     to = 100,
+                     color = hex_to_rgba("green", 0.1),
+                     label = list(text = "Present", rotation = -90, align = "left"),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 20,
+                     to = 80,
+                     color = hex_to_rgba("orange", 0.1),
+                     label = list(text = "Undecided", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 0,
+                     to = 20,
+                     color = hex_to_rgba("red", 0.1),
+                     label = list(text = "Absent", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   )
+                 )) %>%
+        hc_tooltip(valueDecimals = 1, valueSuffix = "/100%") %>%
+        hc_plotOptions(series = list(colorByPoint = TRUE))
+      
+    }
+    
+    if (input$mypat_test2_res == "neg") {
+      ## Create dataset
+      df <- tibble(pre = pre, post = post_prob_neg)
+      df_l <- pivot_longer(df, cols = c(pre, post))
+      df_l$name <- factor(df_l$name, c("pre", "post"), c("Pre", "Post"))
+      
+      ## create graph
+      hc <- df_l %>%
+        hchart('column', hcaes(x = name, y = value*100)) %>%
+        hc_exporting(enabled = TRUE) %>%
+        hc_add_theme(hc_theme_smpl()) %>%
+        hc_xAxis(title = list(text = "")) %>%
+        hc_colors(c("black", "black")) %>%
+        hc_yAxis(title = list(text = "Probability"),
+                 min = 0,
+                 max = 100,
+                 plotBands = list(
+                   list(
+                     from = 80,
+                     to = 100,
+                     color = hex_to_rgba("green", 0.1),
+                     label = list(text = "Present", rotation = -90, align = "left"),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 20,
+                     to = 80,
+                     color = hex_to_rgba("orange", 0.1),
+                     label = list(text = "Undecided", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 0,
+                     to = 20,
+                     color = hex_to_rgba("red", 0.1),
+                     label = list(text = "Absent", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   )
+                 )) %>%
+        hc_tooltip(valueDecimals = 1, valueSuffix = "/100%") %>%
+        hc_plotOptions(series = list(colorByPoint = TRUE))
+    }
+    
+    if (input$mypat_test2_res == "unkn") {
+      ## Create dataset
+      df <- tibble(pre = pre, post = pre)
+      df_l <- pivot_longer(df, cols = c(pre, post))
+      df_l$name <- factor(df_l$name, c("pre", "post"), c("Pre", "Post"))
+      
+      ## create graph
+      hc <- df_l %>%
+        hchart('column', hcaes(x = name, y = value*100)) %>%
+        hc_exporting(enabled = TRUE) %>%
+        hc_add_theme(hc_theme_smpl()) %>%
+        hc_xAxis(title = list(text = "")) %>%
+        hc_colors(c("black", "black")) %>%
+        hc_yAxis(title = list(text = "Probability"),
+                 min = 0,
+                 max = 100,
+                 plotBands = list(
+                   list(
+                     from = 80,
+                     to = 100,
+                     color = hex_to_rgba("green", 0.1),
+                     label = list(text = "Present", rotation = -90, align = "left"),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 20,
+                     to = 80,
+                     color = hex_to_rgba("orange", 0.1),
+                     label = list(text = "Undecided", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 0,
+                     to = 20,
+                     color = hex_to_rgba("red", 0.1),
+                     label = list(text = "Absent", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   )
+                 )) %>%
+        hc_tooltip(valueDecimals = 1, valueSuffix = "/100%") %>%
+        hc_plotOptions(series = list(colorByPoint = TRUE))
+    }
+    
+    hc
+  })
+  
+  output$mypat_test3_graph <- renderHighchart2({
+    
+    # input$mypat_test_1 <- "ROM"
+    # input$mypat_test1_res <- "pos"
+    
+    tmp <- tests_pooled %>%
+      filter(level == "level1", test == input$mypat_test_3, 
+             disease == input$patpop_list, 
+             population == input$mypat_dis_3)
+    
+    se <- min(tmp$se, 0.999)
+    sp <- min(tmp$sp,0.999)
+    pre <- (input$mypat_prob_3/100)
+    
+    prior_odds  <- odds(pre)
+    PLR <- se / (1 - sp)
+    NLR <- (1 - se) / sp
+    post_odds_pos  <- prior_odds * PLR
+    post_odds_neg  <- prior_odds * NLR
+    post_prob_pos  <- post_odds_pos / (1 + post_odds_pos)
+    post_prob_neg  <- post_odds_neg / (1 + post_odds_neg)
+    
+    if (input$mypat_test3_res == "pos") {
+      
+      ## Create dataset
+      df <- tibble(pre = pre, post = post_prob_pos)
+      df_l <- pivot_longer(df, cols = c(pre, post))
+      df_l$name <- factor(df_l$name, c("pre", "post"), c("Pre", "Post"))
+      
+      ## create graph
+      hc <- df_l %>%
+        hchart('column', hcaes(x = name, y = value*100)) %>%
+        hc_exporting(enabled = TRUE) %>%
+        hc_add_theme(hc_theme_smpl()) %>%
+        hc_xAxis(title = list(text = "")) %>%
+        hc_colors(c("black", "black")) %>%
+        hc_yAxis(title = list(text = "Probability"),
+                 min = 0,
+                 max = 100,
+                 plotBands = list(
+                   list(
+                     from = 80,
+                     to = 100,
+                     color = hex_to_rgba("green", 0.1),
+                     label = list(text = "Present", rotation = -90, align = "left"),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 20,
+                     to = 80,
+                     color = hex_to_rgba("orange", 0.1),
+                     label = list(text = "Undecided", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 0,
+                     to = 20,
+                     color = hex_to_rgba("red", 0.1),
+                     label = list(text = "Absent", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   )
+                 )) %>%
+        hc_tooltip(valueDecimals = 1, valueSuffix = "/100%") %>%
+        hc_plotOptions(series = list(colorByPoint = TRUE))
+      
+    }
+    
+    if (input$mypat_test3_res == "neg") {
+      ## Create dataset
+      df <- tibble(pre = pre, post = post_prob_neg)
+      df_l <- pivot_longer(df, cols = c(pre, post))
+      df_l$name <- factor(df_l$name, c("pre", "post"), c("Pre", "Post"))
+      
+      ## create graph
+      hc <- df_l %>%
+        hchart('column', hcaes(x = name, y = value*100)) %>%
+        hc_exporting(enabled = TRUE) %>%
+        hc_add_theme(hc_theme_smpl()) %>%
+        hc_xAxis(title = list(text = "")) %>%
+        hc_colors(c("black", "black")) %>%
+        hc_yAxis(title = list(text = "Probability"),
+                 min = 0,
+                 max = 100,
+                 plotBands = list(
+                   list(
+                     from = 80,
+                     to = 100,
+                     color = hex_to_rgba("green", 0.1),
+                     label = list(text = "Present", rotation = -90, align = "left"),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 20,
+                     to = 80,
+                     color = hex_to_rgba("orange", 0.1),
+                     label = list(text = "Undecided", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 0,
+                     to = 20,
+                     color = hex_to_rgba("red", 0.1),
+                     label = list(text = "Absent", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   )
+                 )) %>%
+        hc_tooltip(valueDecimals = 1, valueSuffix = "/100%") %>%
+        hc_plotOptions(series = list(colorByPoint = TRUE))
+    }
+    
+    if (input$mypat_test3_res == "unkn") {
+      ## Create dataset
+      df <- tibble(pre = pre, post = pre)
+      df_l <- pivot_longer(df, cols = c(pre, post))
+      df_l$name <- factor(df_l$name, c("pre", "post"), c("Pre", "Post"))
+      
+      ## create graph
+      hc <- df_l %>%
+        hchart('column', hcaes(x = name, y = value*100)) %>%
+        hc_exporting(enabled = TRUE) %>%
+        hc_add_theme(hc_theme_smpl()) %>%
+        hc_xAxis(title = list(text = "")) %>%
+        hc_colors(c("black", "black")) %>%
+        hc_yAxis(title = list(text = "Probability"),
+                 min = 0,
+                 max = 100,
+                 plotBands = list(
+                   list(
+                     from = 80,
+                     to = 100,
+                     color = hex_to_rgba("green", 0.1),
+                     label = list(text = "Present", rotation = -90, align = "left"),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 20,
+                     to = 80,
+                     color = hex_to_rgba("orange", 0.1),
+                     label = list(text = "Undecided", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   ),
+                   list(
+                     from = 0,
+                     to = 20,
+                     color = hex_to_rgba("red", 0.1),
+                     label = list(text = "Absent", rotation = -90),
+                     # the zIndex is used to put the label text over the grid lines 
+                     zIndex = 1
+                   )
+                 )) %>%
+        hc_tooltip(valueDecimals = 1, valueSuffix = "/100%") %>%
+        hc_plotOptions(series = list(colorByPoint = TRUE))
+    }
+    
+    hc
+  })
+  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  ##            TAB: ALL DATA ####
+  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  
+  ## OUTPUT (TAB:: ALL DATA)
+  output$dt_tests = DT::renderDataTable({
+    tests %>%
       DT::datatable(data = .,
                     extensions = 'Buttons', 
                     options = list(
@@ -788,160 +1604,8 @@ server <- function(input, output, session) {
                         "$(this.api().table().header()).css({'background-color': '#000', 'color': '#fff'});",
                         "}"),
                       columnDefs = list(list(className = 'dt-center', targets = 0:4))
-                    )) %>%
-      DT::formatStyle(
-        'Sensitvity',
-        #backgroundColor = DT::styleInterval(seq(0,1,0.05), clrs),
-        background = DT::styleColorBar(seq(0,1,0.05), "#00a65a"),
-        backgroundSize = '90% 80%',
-        backgroundRepeat = 'no-repeat',
-        backgroundPosition = 'center'
-      ) %>%
-      DT::formatStyle(
-        'Specificity',
-        background = DT::styleColorBar(seq(0,1,0.05), "#00a65a"),
-        backgroundSize = '80% 80%',
-        backgroundRepeat = 'no-repeat',
-        backgroundPosition = 'center'
-      )
-  })
-  
-    ## ++++++Patient? #####
-    ## +++++++++Calculate combined Se and Sp for SERIAL and PAR #####
-  post_test_mypat <- reactive({
-    req(input$disorder_list)
-    req(input$test_list)
-    ## COMBINED SE AND SP
-    tmp <- filter(
-      tests_pooled(),
-      test %in% input$test_list,
-      level == "level1",
-      disease == input$disorder_list
-    )
-    se_p <- 1
-    sp_p <- 1
-    se_s <- 1
-    sp_s <- 1
+                    ))
     
-    for (i in 1:nrow(tmp)) {
-      ## combined
-      se_s <- tmp[i, "se"] * se_s
-      sp_p <- tmp[i, "sp"] * sp_p
-      
-      se_p <- se_p * (1 - tmp[i, "se"])
-      sp_s <- sp_s * (1 - tmp[i, "sp"])
-    }
-    
-    ## after loop
-    se_p <- 1 - se_p
-    sp_s <- 1 - sp_s
-    
-    ## Calculate post test probability for SERIAL
-    prior_prob  <-  input$pat_prev_mypat / 100
-    prior_odds  <- odds(prior_prob)
-    sensitivity <- min(se_s, 0.99999)
-    specificity <- min(sp_s, 0.99999)
-    PLR <- sensitivity / (1 - specificity)
-    NLR <- (1 - sensitivity) / specificity
-    post_odds_pos  <- prior_odds * PLR
-    post_odds_neg  <- prior_odds * NLR
-    post_prob_pos_s  <- post_odds_pos / (1 + post_odds_pos)
-    post_prob_neg_s  <- post_odds_neg / (1 + post_odds_neg)
-    
-    ## Calculate post test probability for PARALLEL
-    prior_prob  <-  input$pat_prev_mypat / 100
-    prior_odds  <- odds(prior_prob)
-    sensitivity <- min(se_p, 0.99999)
-    specificity <- min(sp_p, 0.99999)
-    PLR <- sensitivity / (1 - specificity)
-    NLR <- (1 - sensitivity) / specificity
-    post_odds_pos  <- prior_odds * PLR
-    post_odds_neg  <- prior_odds * NLR
-    post_prob_pos_p  <- post_odds_pos / (1 + post_odds_pos)
-    post_prob_neg_p  <- post_odds_neg / (1 + post_odds_neg)
-    
-    post_test_mypat <-
-      list(
-        "post_prob_pos_s" = post_prob_pos_s,
-        "post_prob_neg_s" = post_prob_neg_s,
-        "post_prob_pos_p" = post_prob_pos_p,
-        "post_prob_neg_p" = post_prob_neg_p
-      )
-    
-    return(post_test_mypat)
-  })
-  
- 
-  ## ++++++Patient specific NPV and PPV #####
-  ## ++++++++++PPV #####
-  output$mypat_ppv_s <- renderGauge({
-    gauge(
-      value = round(post_test_mypat()$post_prob_pos_s, 3) * 100,
-      abbreviateDecimals = 2,
-      symbol = "%",
-      min = 0,
-      max = 100,
-      sectors = gaugeSectors(
-        success = c(80, 100),
-        warning = c(50, 80),
-        danger = c(0, 50)
-      )
-    )
-  })
-  
-  output$mypat_npv_s <- renderGauge({
-    gauge(
-      value = round(post_test_mypat()$post_prob_neg_s, 3) * 100,
-      abbreviateDecimals = 2,
-      symbol = "%",
-      min = 0,
-      max = 100,
-      sectors = gaugeSectors(
-        success = c(80, 100),
-        warning = c(50, 80),
-        danger = c(0, 50)
-      )
-    )
-  })
-  
-  output$mypat_ppv_p <- renderGauge({
-    gauge(
-      value = round(post_test_mypat()$post_prob_pos_p, 3) * 100,
-      abbreviateDecimals = 2,
-      symbol = "%",
-      min = 0,
-      max = 100,
-      sectors = gaugeSectors(
-        success = c(80, 100),
-        warning = c(50, 80),
-        danger = c(0, 50)
-      )
-    )
-  })
-  
-  output$mypat_npv_p <- renderGauge({
-    gauge(
-      value = round(post_test_mypat()$post_prob_neg_p, 3) * 100,
-      abbreviateDecimals = 2,
-      symbol = "%",
-      min = 0,
-      max = 100,
-      sectors = gaugeSectors(
-        success = c(80, 100),
-        warning = c(50, 80),
-        danger = c(0, 50)
-      )
-    )
-  })
-  
-  
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  ##            TAB: ALL DATA####
-  ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  
-  ## OUTPUT (TAB:: ALL DATA)
-  output$dt_tests = DT::renderDataTable({
-    tests
   })
   
   ## +++Download function #####
